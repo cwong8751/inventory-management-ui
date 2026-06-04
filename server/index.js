@@ -4,15 +4,33 @@ const cors = require('cors');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const session = require('express-session');
+const bcrypt = require('bcryptjs');
 
 const app = express();
+
+app.use(cors({
+  origin: 'http://localhost:3000',
+  credentials: true,
+}));
 app.use(express.json());
-app.use(cors());
+app.use(express.urlencoded({ extended: true }));
+
+app.use(session({
+  secret: 'inv-secret-key-change-in-prod',
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    httpOnly: true,
+    sameSite: 'lax',
+    maxAge: 8 * 60 * 60 * 1000, // 8 hours
+  },
+}));
 
 // Serve uploaded images statically
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// Multer setup — saves image to /uploads, only if provided
+// Multer setup
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     const dir = path.join(__dirname, 'uploads');
@@ -20,7 +38,6 @@ const storage = multer.diskStorage({
     cb(null, dir);
   },
   filename: (req, file, cb) => {
-    // Name the file after the prefix, e.g. ABC.jpg
     const prefix = (req.body.barcode || '').slice(0, 3).toUpperCase();
     const ext = path.extname(file.originalname);
     cb(null, `${prefix}${ext}`);
@@ -45,20 +62,96 @@ pool.connect((err, client, release) => {
   }
 });
 
+// ─── AUTH MIDDLEWARE ──────────────────────────────────────────────────────────
+
+function requireAuth(req, res, next) {
+  if (!req.session.userId) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  next();
+}
+
+function requireAdmin(req, res, next) {
+  if (!req.session.userId) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  if (req.session.type !== 'admin') {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  next();
+}
+
+// ─── AUTH ENDPOINTS ───────────────────────────────────────────────────────────
+
+// POST /auth/login
+app.post('/auth/login', async (req, res) => {
+  const { username, password } = req.body;
+  if (!username || !password) {
+    return res.status(400).json({ error: 'Username and password are required' });
+  }
+  try {
+    const result = await pool.query(
+      `SELECT id, username, password, email, type FROM inventory_schema.users WHERE username = $1`,
+      [username]
+    );
+    if (result.rows.length === 0) {
+      return res.status(401).json({ error: 'Invalid username or password' });
+    }
+    const user = result.rows[0];
+    const valid = await bcrypt.compare(password, user.password);
+    if (!valid) {
+      return res.status(401).json({ error: 'Invalid username or password' });
+    }
+    req.session.userId   = user.id;
+    req.session.username = user.username;
+    req.session.type     = user.type;
+    res.json({ id: user.id, username: user.username, email: user.email, type: user.type });
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// POST /auth/logout
+app.post('/auth/logout', (req, res) => {
+  req.session.destroy(() => {
+    res.json({ message: 'Logged out' });
+  });
+});
+
+// GET /auth/me  — returns current session user or 401
+app.get('/auth/me', async (req, res) => {
+  if (!req.session.userId) {
+    return res.status(401).json({ error: 'Not logged in' });
+  }
+  try {
+    const result = await pool.query(
+      `SELECT id, username, email, type FROM inventory_schema.users WHERE id = $1`,
+      [req.session.userId]
+    );
+    if (result.rows.length === 0) {
+      req.session.destroy(() => {});
+      return res.status(401).json({ error: 'User not found' });
+    }
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // ─── HELPER ───────────────────────────────────────────────────────────────────
 
 function parseBarcode(barcode) {
-  // e.g. ABCDM28 or ABCDXL05
   if (!barcode || barcode.length < 7) throw new Error('Barcode too short');
   if (barcode[3] !== 'D') throw new Error('4th character must be D');
 
-  const prefix      = barcode.slice(0, 3).toUpperCase();
-  const type_code   = barcode[0].toUpperCase();
-  const style_code  = barcode[1].toUpperCase();
-  const texture_code= barcode[2].toUpperCase();
-  const afterMarker = barcode.slice(4);                      // e.g. 'M28' or 'XL05'
-  const unit_number = parseInt(afterMarker.slice(-2), 10);   // last 2 chars
-  const size        = afterMarker.slice(0, -2).toUpperCase();// everything before last 2
+  const prefix       = barcode.slice(0, 3).toUpperCase();
+  const type_code    = barcode[0].toUpperCase();
+  const style_code   = barcode[1].toUpperCase();
+  const texture_code = barcode[2].toUpperCase();
+  const afterMarker  = barcode.slice(4);
+  const unit_number  = parseInt(afterMarker.slice(-2), 10);
+  const size         = afterMarker.slice(0, -2).toUpperCase();
 
   if (!size) throw new Error('Could not parse size from barcode');
   if (isNaN(unit_number)) throw new Error('Could not parse unit number from barcode');
@@ -66,11 +159,9 @@ function parseBarcode(barcode) {
   return { prefix, type_code, style_code, texture_code, size, unit_number };
 }
 
-// ─── CHECK PREFIX ─────────────────────────────────────────────────────────────
+// ─── INVENTORY ROUTES (protected) ────────────────────────────────────────────
 
-// GET /prefix-check/:prefix
-// Returns { exists: true/false } so the frontend knows whether to show image upload
-app.get('/prefix-check/:prefix', async (req, res) => {
+app.get('/prefix-check/:prefix', requireAuth, async (req, res) => {
   try {
     const prefix = req.params.prefix.toUpperCase();
     const result = await pool.query(
@@ -84,13 +175,7 @@ app.get('/prefix-check/:prefix', async (req, res) => {
   }
 });
 
-// ─── SCAN / ADD ITEM ──────────────────────────────────────────────────────────
-
-// POST /scan
-// multipart/form-data: { barcode: string, image?: file }
-// - If prefix is new: image is required → inserts into clothing_images + clothing_items
-// - If prefix exists: image ignored   → inserts into clothing_items only
-app.post('/scan', upload.single('image'), async (req, res) => {
+app.post('/scan', requireAuth, upload.single('image'), async (req, res) => {
   const client = await pool.connect();
   try {
     const { barcode } = req.body;
@@ -100,7 +185,6 @@ app.post('/scan', upload.single('image'), async (req, res) => {
 
     await client.query('BEGIN');
 
-    // Check if prefix already exists
     const prefixCheck = await client.query(
       `SELECT prefix, image_url FROM inventory_schema.clothing_images WHERE prefix = $1`,
       [parsed.prefix]
@@ -109,7 +193,6 @@ app.post('/scan', upload.single('image'), async (req, res) => {
     let image_url;
 
     if (prefixCheck.rows.length === 0) {
-      // First scan for this prefix — image is required
       if (!req.file) {
         await client.query('ROLLBACK');
         return res.status(400).json({
@@ -122,11 +205,9 @@ app.post('/scan', upload.single('image'), async (req, res) => {
         [parsed.prefix, image_url]
       );
     } else {
-      // Prefix exists — use existing image, ignore any uploaded file
       image_url = prefixCheck.rows[0].image_url;
     }
 
-    // Check barcode isn't already registered
     const barcodeCheck = await client.query(
       `SELECT id FROM inventory_schema.clothing_items WHERE barcode = $1`,
       [barcode.toUpperCase()]
@@ -136,7 +217,6 @@ app.post('/scan', upload.single('image'), async (req, res) => {
       return res.status(409).json({ error: 'This barcode has already been scanned' });
     }
 
-    // Insert the unit — trigger auto-fills parsed columns
     const result = await client.query(
       `INSERT INTO inventory_schema.clothing_items (barcode, image_prefix, type_code, style_code, texture_code, size, unit_number)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -154,10 +234,7 @@ app.post('/scan', upload.single('image'), async (req, res) => {
 
     await client.query('COMMIT');
 
-    res.status(201).json({
-      ...result.rows[0],
-      image_url
-    });
+    res.status(201).json({ ...result.rows[0], image_url });
 
   } catch (err) {
     await client.query('ROLLBACK');
@@ -168,13 +245,7 @@ app.post('/scan', upload.single('image'), async (req, res) => {
   }
 });
 
-// ─── GET ALL ITEMS ────────────────────────────────────────────────────────────
-
-// GET /clothing-items
-// Returns items grouped by prefix. Each group has:
-//   prefix, image_url, type_code, style_code, texture_code,
-//   sizes: [{ size, count, units: [{ id, barcode, unit_number }] }]
-app.get('/clothing-items', async (req, res) => {
+app.get('/clothing-items', requireAuth, async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT
@@ -199,7 +270,6 @@ app.get('/clothing-items', async (req, res) => {
       ORDER BY ci.image_prefix, ci.size
     `);
 
-    // Re-group by prefix on the JS side so the frontend gets one object per clothing
     const grouped = {};
     for (const row of result.rows) {
       if (!grouped[row.prefix]) {
@@ -226,18 +296,12 @@ app.get('/clothing-items', async (req, res) => {
   }
 });
 
-// ─── DELETE A SINGLE UNIT ─────────────────────────────────────────────────────
-
-// DELETE /clothing-items/:id
-// Deletes one physical unit by its row id.
-// If it was the last unit under a prefix, also deletes the clothing_images row.
-app.delete('/clothing-items/:id', async (req, res) => {
+app.delete('/clothing-items/:id', requireAuth, async (req, res) => {
   const client = await pool.connect();
   try {
     const { id } = req.params;
     await client.query('BEGIN');
 
-    // Get the item first so we know its prefix
     const itemResult = await client.query(
       `DELETE FROM inventory_schema.clothing_items WHERE id = $1 RETURNING *`,
       [id]
@@ -249,14 +313,12 @@ app.delete('/clothing-items/:id', async (req, res) => {
 
     const deletedItem = itemResult.rows[0];
 
-    // Check if any units remain under this prefix
     const remaining = await client.query(
       `SELECT COUNT(*) FROM inventory_schema.clothing_items WHERE image_prefix = $1`,
       [deletedItem.image_prefix]
     );
 
     if (parseInt(remaining.rows[0].count, 10) === 0) {
-      // No units left — clean up the image row too
       await client.query(
         `DELETE FROM inventory_schema.clothing_images WHERE prefix = $1`,
         [deletedItem.image_prefix]
@@ -272,6 +334,110 @@ app.delete('/clothing-items/:id', async (req, res) => {
     res.status(500).json({ error: 'Database error' });
   } finally {
     client.release();
+  }
+});
+
+// ─── ADMIN ROUTES (admin only) ────────────────────────────────────────────────
+
+// GET /admin/users — list all users
+app.get('/admin/users', requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, username, email, type, created_at FROM inventory_schema.users ORDER BY id`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// POST /admin/users — create a new user
+app.post('/admin/users', requireAdmin, async (req, res) => {
+  const { username, password, email, type } = req.body;
+  if (!username || !password || !email || !type) {
+    return res.status(400).json({ error: 'username, password, email, and type are required' });
+  }
+  if (!['admin', 'user'].includes(type)) {
+    return res.status(400).json({ error: 'type must be "admin" or "user"' });
+  }
+  try {
+    const hashed = await bcrypt.hash(password, 10);
+    const result = await pool.query(
+      `INSERT INTO inventory_schema.users (username, password, email, type)
+       VALUES ($1, $2, $3, $4)
+       RETURNING id, username, email, type, created_at`,
+      [username, hashed, email, type]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    if (err.code === '23505') {
+      return res.status(409).json({ error: 'Username or email already exists' });
+    }
+    console.error(err.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// PUT /admin/users/:id — update email and/or password
+app.put('/admin/users/:id', requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const { email, password, type } = req.body;
+  if (!email && !password && !type) {
+    return res.status(400).json({ error: 'Provide at least one field to update' });
+  }
+  if (type && !['admin', 'user'].includes(type)) {
+    return res.status(400).json({ error: 'type must be "admin" or "user"' });
+  }
+  try {
+    const sets = [];
+    const vals = [];
+    let i = 1;
+    if (email)    { sets.push(`email = $${i++}`);    vals.push(email); }
+    if (type)     { sets.push(`type = $${i++}`);     vals.push(type); }
+    if (password) {
+      const hashed = await bcrypt.hash(password, 10);
+      sets.push(`password = $${i++}`);
+      vals.push(hashed);
+    }
+    vals.push(id);
+    const result = await pool.query(
+      `UPDATE inventory_schema.users SET ${sets.join(', ')} WHERE id = $${i}
+       RETURNING id, username, email, type, created_at`,
+      vals
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    res.json(result.rows[0]);
+  } catch (err) {
+    if (err.code === '23505') {
+      return res.status(409).json({ error: 'Email already in use' });
+    }
+    console.error(err.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// DELETE /admin/users/:id
+app.delete('/admin/users/:id', requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  // Prevent self-deletion
+  if (parseInt(id, 10) === req.session.userId) {
+    return res.status(400).json({ error: 'Cannot delete your own account' });
+  }
+  try {
+    const result = await pool.query(
+      `DELETE FROM inventory_schema.users WHERE id = $1 RETURNING id, username`,
+      [id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    res.json({ message: 'Deleted', user: result.rows[0] });
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).json({ error: 'Database error' });
   }
 });
 

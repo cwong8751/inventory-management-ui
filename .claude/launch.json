@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "inventory-ui",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["start"],
+      "cwd": "/Users/carl/Documents/GitHub/inventory-management-ui/inventory-ui",
+      "port": 3000
+    }
+  ]
+}
