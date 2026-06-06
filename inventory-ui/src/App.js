@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
-import LoginPage from './pages/LoginPage';
+import LoginPage     from './pages/LoginPage';
 import InventoryPage from './pages/InventoryPage';
-import AdminPage from './pages/AdminPage';
+import AdminPage     from './pages/AdminPage';
+import SalesPage     from './pages/SalesPage';
 import './App.css';
 
 export default function App() {
@@ -23,22 +24,19 @@ export default function App() {
     return <LoginPage onLogin={setUser} />;
   }
 
-  // Only admins can reach the admin page; everyone else falls back to inventory
+  const commonProps = {
+    user,
+    onLogout:   () => setUser(false),
+    onNavigate: setPage,
+  };
+
   if (page === 'admin' && user.type === 'admin') {
-    return (
-      <AdminPage
-        user={user}
-        onLogout={() => setUser(false)}
-        onNavigate={setPage}
-      />
-    );
+    return <AdminPage {...commonProps} />;
   }
 
-  return (
-    <InventoryPage
-      user={user}
-      onLogout={() => setUser(false)}
-      onNavigate={setPage}
-    />
-  );
+  if (page === 'sales') {
+    return <SalesPage {...commonProps} />;
+  }
+
+  return <InventoryPage {...commonProps} />;
 }
