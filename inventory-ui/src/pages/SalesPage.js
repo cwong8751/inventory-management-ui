@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 
-const API  =  process.env.BACKEND_API_URL || 'http://localhost:8080';
+const API  =  process.env.REACT_APP_BACKEND_API_URL || 'http://localhost:8080';
 const OPTS = { credentials: 'include' };
 
 const METHOD_LABELS = {

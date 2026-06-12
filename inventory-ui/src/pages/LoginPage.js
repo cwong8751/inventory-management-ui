@@ -5,7 +5,7 @@ export default function LoginPage({ onLogin }) {
   const [password, setPassword] = useState('');
   const [error, setError]       = useState(null);
   const [loading, setLoading]   = useState(false);
-  const API_URL = process.env.BACKEND_API_URL || 'http://localhost:8080';
+  const API_URL = process.env.REACT_APP_BACKEND_API_URL || 'http://localhost:8080';
 
   async function handleSubmit(e) {
     e.preventDefault();
