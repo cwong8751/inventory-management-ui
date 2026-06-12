@@ -5,13 +5,14 @@ export default function LoginPage({ onLogin }) {
   const [password, setPassword] = useState('');
   const [error, setError]       = useState(null);
   const [loading, setLoading]   = useState(false);
+  const API_URL = process.env.BACKEND_API_URL || 'http://localhost:8080';
 
   async function handleSubmit(e) {
     e.preventDefault();
     setError(null);
     setLoading(true);
     try {
-      const res = await fetch('http://localhost:8080/auth/login', {
+      const res = await fetch(`${API_URL}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',

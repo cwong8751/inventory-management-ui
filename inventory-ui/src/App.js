@@ -8,9 +8,10 @@ import './App.css';
 export default function App() {
   const [user, setUser] = useState(null);   // null=loading, false=guest, object=authed
   const [page, setPage] = useState('inventory');
+  const API = process.env.BACKEND_API_URL || 'http://localhost:8080';
 
   useEffect(() => {
-    fetch('http://localhost:8080/auth/me', { credentials: 'include' })
+    fetch(`${API}/auth/me`, { credentials: 'include' })
       .then(res => res.ok ? res.json() : null)
       .then(data => setUser(data || false))
       .catch(() => setUser(false));

@@ -72,7 +72,7 @@ io.on('connection', (socket) => {
 
 // ─── Express middleware ───────────────────────────────────────────────────────
 app.use(cors({
-  origin: 'http://localhost:3000',
+  origin: 'https://inventory-management-ui-pi.vercel.app',
   credentials: true,
 }));
 app.use(express.json());
