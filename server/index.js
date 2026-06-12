@@ -109,7 +109,7 @@ const upload = multer({ storage });
 
 // ─── PostgreSQL ───────────────────────────────────────────────────────────────
 const pool = new Pool({
-  connectionString: 'postgres.railway.internal',
+  connectionString: process.env.DATABASE_URL,
 });
 
 pool.connect((err, client, release) => {
