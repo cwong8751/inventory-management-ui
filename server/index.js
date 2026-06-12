@@ -71,6 +71,7 @@ io.on('connection', (socket) => {
 });
 
 // ─── Express middleware ───────────────────────────────────────────────────────
+app.set('trust proxy', 1); // make trust proxy for railway deployment (for secure cookies)
 app.use(cors({
   origin: 'https://inventory-management-ui-pi.vercel.app',
   credentials: true,
@@ -84,6 +85,7 @@ app.use(session({
   saveUninitialized: false,
   cookie: {
     httpOnly: true,
+    secure: true,
     sameSite: 'none',
     maxAge: 8 * 60 * 60 * 1000,
   },
