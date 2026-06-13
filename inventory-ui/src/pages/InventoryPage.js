@@ -629,7 +629,7 @@ export default function InventoryPage({ user, onLogout, onNavigate }) {
 
       {/* ── Footer ── */}
       <footer className="server-info">
-        <div className="server-inner">Server: {API}</div>
+        <div className="server-inner">&copy; Inventory Management System</div>
       </footer>
     </div>
   );

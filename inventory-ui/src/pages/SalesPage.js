@@ -179,7 +179,7 @@ export default function SalesPage({ user, onLogout, onNavigate }) {
       </div>
 
       <footer className="server-info">
-        <div className="server-inner">Server: {API}</div>
+        <div className="server-inner">&copy; Inventory Management System</div>
       </footer>
     </div>
   );
