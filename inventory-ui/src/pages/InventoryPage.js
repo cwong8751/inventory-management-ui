@@ -18,8 +18,9 @@ function parseBarcode(barcode) {
   };
 }
 
-const API  =  process.env.REACT_APP_BACKEND_API_URL || 'http://localhost:8080';
-const OPTS = { credentials: 'include' };
+const API       = process.env.REACT_APP_BACKEND_API_URL || 'http://localhost:8080';
+const OPTS      = { credentials: 'include' };
+const DEMO_MODE = process.env.REACT_APP_DEMO_MODE === 'true';
 
 export default function InventoryPage({ user, onLogout, onNavigate }) {
   // ── Inventory state ─────────────────────────────────────────────────────────
@@ -73,6 +74,8 @@ export default function InventoryPage({ user, onLogout, onNavigate }) {
 
   // ── QR code + initial scanner status ────────────────────────────────────────
   useEffect(() => {
+    if (DEMO_MODE) return;
+
     fetch(`${API}/scanner/qr`, OPTS)
       .then(r => r.json())
       .then(setQrData)
@@ -86,6 +89,8 @@ export default function InventoryPage({ user, onLogout, onNavigate }) {
 
   // ── SSE — scanner events ─────────────────────────────────────────────────────
   useEffect(() => {
+    if (DEMO_MODE) return;
+
     const es = new EventSource(`${API}/scanner/events`, { withCredentials: true });
 
     es.addEventListener('scanner-status', (e) => {
@@ -98,12 +103,10 @@ export default function InventoryPage({ user, onLogout, onNavigate }) {
 
       if (data.barcode != null) {
         const barcode = String(data.barcode).trim();
-        // Open the add modal pre-filled with the scanned barcode
         openAddModalWithBarcode(barcode);
       }
 
       if (data.image != null) {
-        // Pair the image with the currently open modal
         setScannedImage(data.image);
       }
     });
@@ -432,29 +435,40 @@ export default function InventoryPage({ user, onLogout, onNavigate }) {
         {/* ── Left sidebar: Scanner ── */}
         <aside className="inv-sidebar">
 
-          {/* Scanner connection status */}
-          <div className="scanner-status-box">
-            <span className={`scanner-dot ${scannerConnected ? 'dot-on' : 'dot-off'}`} />
-            <span className={`scanner-status-text ${scannerConnected ? 'status-on' : 'status-off'}`}>
-              {scannerConnected ? 'Scanner Connected' : 'Scanner Disconnected'}
-            </span>
-          </div>
-
-          {/* QR Code */}
-          <div className="sidebar-section-header">Connection QR Code</div>
-          <div className="sidebar-qr-body">
-            <p className="scanner-help">
-              Connect scanner to the same Wi-Fi, then scan this QR code.
-            </p>
-            {qrData ? (
-              <div className="qr-block">
-                <img src={qrData.qr} alt="QR Code" className="qr-img" />
-                <code className="qr-url">{qrData.url}</code>
+          {DEMO_MODE ? (
+            <div className="demo-mode-notice">
+              <div className="demo-mode-badge">DEMO MODE</div>
+              <p className="demo-mode-text">
+                Under demo mode, the connection with mobile scanner devices is not available.
+              </p>
+            </div>
+          ) : (
+            <>
+              {/* Scanner connection status */}
+              <div className="scanner-status-box">
+                <span className={`scanner-dot ${scannerConnected ? 'dot-on' : 'dot-off'}`} />
+                <span className={`scanner-status-text ${scannerConnected ? 'status-on' : 'status-off'}`}>
+                  {scannerConnected ? 'Scanner Connected' : 'Scanner Disconnected'}
+                </span>
               </div>
-            ) : (
-              <div className="qr-placeholder">Loading QR...</div>
-            )}
-          </div>
+
+              {/* QR Code */}
+              <div className="sidebar-section-header">Connection QR Code</div>
+              <div className="sidebar-qr-body">
+                <p className="scanner-help">
+                  Connect scanner to the same Wi-Fi, then scan this QR code.
+                </p>
+                {qrData ? (
+                  <div className="qr-block">
+                    <img src={qrData.qr} alt="QR Code" className="qr-img" />
+                    <code className="qr-url">{qrData.url}</code>
+                  </div>
+                ) : (
+                  <div className="qr-placeholder">Loading QR...</div>
+                )}
+              </div>
+            </>
+          )}
 
           {/* ── Pending Scans (hidden for now) ── */}
           {/*
